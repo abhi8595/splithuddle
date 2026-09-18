@@ -29,6 +29,48 @@ export interface SplitLinkPublicData {
   lineItems?: BalanceLineItem[];
 }
 
+// --- Claim links (/claim/[token]) ---
+
+export interface ClaimLineItem {
+  id: string;
+  title: string;
+  amount: number;
+}
+
+export interface ClaimLinkData {
+  expenseTitle: string;
+  totalAmount: number;
+  currency: string; // e.g. "INR"
+  paidByName: string;
+  participants: Participant[];
+  status: "active" | "expired" | "revoked";
+  kind?: "claim";
+  lineItems?: ClaimLineItem[];
+}
+
+/** Either link shape; the /split/[token] fallback routes on `kind`. */
+export type AnyLinkData = SplitLinkPublicData | ClaimLinkData;
+
+export function isClaimLink(data: AnyLinkData): data is ClaimLinkData {
+  return (data as ClaimLinkData).kind === "claim";
+}
+
+export interface ClaimSubmission {
+  memberId: string;
+  guestName: string;
+  lineIds: string[];
+}
+
+export interface ClaimRecord {
+  memberId: string;
+  guestName: string;
+  lineIds: string[];
+}
+
+export interface ClaimsResponse {
+  claims: ClaimRecord[];
+}
+
 export type FetchErrorKind = "invalid" | "offline" | "http" | "config";
 
 export class SplitFetchError extends Error {
@@ -97,7 +139,7 @@ async function requestWithRetries(
 }
 
 /** GET get-split-link?token=<token>. 4xx => invalid/unknown link. */
-export async function getSplitLink(token: string): Promise<SplitLinkPublicData> {
+export async function getAnySplitLink(token: string): Promise<AnyLinkData> {
   const base = getBaseUrl();
   let res: Response;
   try {
@@ -135,7 +177,101 @@ export async function getSplitLink(token: string): Promise<SplitLinkPublicData> 
       res.status
     );
   }
-  return (await res.json()) as SplitLinkPublicData;
+  return (await res.json()) as AnyLinkData;
+}
+
+/** Same fetch, typed for balance links. */
+export async function getSplitLink(token: string): Promise<SplitLinkPublicData> {
+  return (await getAnySplitLink(token)) as SplitLinkPublicData;
+}
+
+/** Same fetch, typed for claim links. */
+export async function getClaimLink(token: string): Promise<ClaimLinkData> {
+  return (await getAnySplitLink(token)) as ClaimLinkData;
+}
+
+/**
+ * POST submit-claim { token, memberId, guestName, lineIds }.
+ * Resubmitting OVERWRITES previous picks. One-shot: caller disables UI while pending.
+ */
+export async function submitClaim(
+  token: string,
+  submission: ClaimSubmission
+): Promise<void> {
+  const base = getBaseUrl();
+  let res: Response;
+  try {
+    res = await requestWithRetries(() => `${base}/submit-claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token,
+        memberId: submission.memberId,
+        guestName: submission.guestName,
+        lineIds: submission.lineIds,
+      }),
+    });
+  } catch (err) {
+    if (isOfflineError(err)) {
+      throw new SplitFetchError(
+        "offline",
+        "You appear to be offline. Check your connection and try again."
+      );
+    }
+    throw new SplitFetchError(
+      "http",
+      "Could not send your picks. Please try again."
+    );
+  }
+  if (res.status >= 400 && res.status < 500) {
+    throw new SplitFetchError(
+      "invalid",
+      "This link is no longer valid.",
+      res.status
+    );
+  }
+  if (!res.ok) {
+    throw new SplitFetchError(
+      "http",
+      "Could not send your picks. Please try again.",
+      res.status
+    );
+  }
+}
+
+/**
+ * GET get-claims?token=<token>. Best-effort transparency counts.
+ * Callers should ignore failures: ticking still works without counts.
+ */
+export async function getClaims(token: string): Promise<ClaimsResponse> {
+  const base = getBaseUrl();
+  let res: Response;
+  try {
+    res = await requestWithRetries(
+      () => `${base}/get-claims?token=${encodeURIComponent(token)}`,
+      { method: "GET", cache: "no-store" }
+    );
+  } catch (err) {
+    if (isOfflineError(err)) {
+      throw new SplitFetchError(
+        "offline",
+        "You appear to be offline. Check your connection and try again."
+      );
+    }
+    throw new SplitFetchError(
+      "http",
+      "Could not load other picks. Please try again."
+    );
+  }
+  if (!res.ok) {
+    throw new SplitFetchError(
+      "http",
+      "Could not load other picks. Please try again.",
+      res.status
+    );
+  }
+  const body = (await res.json()) as Partial<ClaimsResponse>;
+  return { claims: Array.isArray(body.claims) ? body.claims : [] };
 }
 
 /** POST mark-paid?token=<token> { participantId }. One-shot: caller disables UI while pending. */

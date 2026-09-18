@@ -13,6 +13,13 @@ import {
   type Participant,
   type SplitLinkPublicData,
 } from "@/lib/split";
+import {
+  GuestBadState,
+  GuestLoadingSkeleton,
+  GuestShell,
+  TOUCH,
+  linkErrorCopy,
+} from "@/components/guest";
 
 type LoadState =
   | { status: "loading" }
@@ -21,10 +28,8 @@ type LoadState =
 
 type DoneState = { type: "paid" } | { type: "disputed" } | null;
 
-const MIN_TOUCH = "min-h-[44px]";
-
 function storageKey(token: string) {
-  return `splito:participant:${token}`;
+  return `splithuddle:participant:${token}`;
 }
 
 function statusBadge(status: Participant["status"]): string {
@@ -42,67 +47,23 @@ function statusBadge(status: Participant["status"]): string {
   }
 }
 
-function BadState({
-  title,
-  message,
-  onRetry,
-}: {
-  title: string;
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
-      <p className="text-3xl" aria-hidden="true">
-        {title.includes("Offline") ? "📡" : title.includes("Invalid") ? "🔗" : "⏸️"}
-      </p>
-      <h2 className="mt-3 text-xl font-bold text-slate-900">{title}</h2>
-      <p className="mt-2 text-base leading-relaxed text-slate-600">{message}</p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className={`${MIN_TOUCH} mt-5 inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-5 text-base font-semibold text-white active:bg-blue-700`}
-      >
-        Retry
-      </button>
-    </div>
-  );
-}
-
-function LoadingSkeleton() {
-  return (
-    <div aria-busy="true" aria-label="Loading your share">
-      <div className="animate-pulse rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="h-4 w-32 rounded bg-slate-200" />
-        <div className="mt-4 h-6 w-48 rounded bg-slate-200" />
-        <div className="mt-2 h-12 w-40 rounded bg-slate-200" />
-        <div className="mt-5 flex gap-3">
-          <div className="h-11 flex-1 rounded-xl bg-slate-200" />
-          <div className="h-11 flex-1 rounded-xl bg-slate-200" />
-        </div>
-      </div>
-      <div className="mt-4 animate-pulse rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="h-4 w-40 rounded bg-slate-200" />
-        <div className="mt-3 space-y-2">
-          <div className="h-5 rounded bg-slate-100" />
-          <div className="h-5 rounded bg-slate-100" />
-          <div className="h-5 rounded bg-slate-100" />
-        </div>
-      </div>
-      <p className="mt-4 text-center text-base text-slate-500">Loading your share…</p>
-    </div>
-  );
-}
-
 export default function SplitView({
   groupSlug,
   token,
+  initialData,
 }: {
-  groupSlug: string;
+  groupSlug?: string;
   token: string;
+  /** Pre-fetched link (used by the /split/[token] fallback so it fetches once). */
+  initialData?: SplitLinkPublicData;
 }) {
-  const groupName = useMemo(() => prettyPrintSlug(groupSlug), [groupSlug]);
-  const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+  const groupName = useMemo(
+    () => (groupSlug ? prettyPrintSlug(groupSlug) : null),
+    [groupSlug]
+  );
+  const [loadState, setLoadState] = useState<LoadState>(
+    initialData ? { status: "ready", data: initialData } : { status: "loading" }
+  );
   const [retryCount, setRetryCount] = useState(0);
 
   // Note: <SplitView> is keyed by token (see page.tsx), so mounting state
@@ -152,7 +113,7 @@ export default function SplitView({
           setLoadState({
             status: "bad",
             kind: "invalid",
-            message: "We couldn't find this payment link. It may be mistyped or no longer shared — ask the group owner for a fresh link.",
+            message: "We couldn't find this payment link. It may be mistyped or no longer shared - ask the group owner for a fresh link.",
           });
         } else if (err.kind === "offline") {
           setLoadState({
@@ -180,11 +141,14 @@ export default function SplitView({
   }, [token]);
 
   useEffect(() => {
+    // Skip the fetch when the fallback route already loaded this link.
+    // A Retry still refetches fresh data.
+    if (initialData && retryCount === 0) return;
     // Fetch-on-mount (+ on Retry) is the intended use of an effect here;
     // completion handlers update state asynchronously, no cascade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
-  }, [load, retryCount]);
+  }, [initialData, load, retryCount]);
 
   const retry = useCallback(() => setRetryCount((c) => c + 1), []);
 
@@ -278,62 +242,22 @@ export default function SplitView({
     });
   }, [data, participant]);
 
+  const badCopy =
+    loadState.status === "bad" ? linkErrorCopy(loadState.kind) : null;
+
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
-      <div className="mx-auto w-full max-w-[600px] px-4 pb-10 pt-5 text-base">
-        {/* Header */}
-        <header className="flex items-center justify-between gap-3">
-          <p className="text-lg font-extrabold tracking-tight">
-            Splito
-          </p>
-          <p className="truncate text-base font-medium text-slate-600" title={groupName}>
-            {groupName}
-          </p>
-        </header>
-        <p className="mt-1 text-base text-slate-500">No app needed to pay</p>
+    <GuestShell headerRight={groupName ?? undefined}>
+      {loadState.status === "loading" && (
+        <GuestLoadingSkeleton label="Loading your share…" />
+      )}
 
-        <main className="mt-4">
-          {loadState.status === "loading" && <LoadingSkeleton />}
-
-          {loadState.status === "bad" && (
-            <>
-              {loadState.kind === "invalid" && (
-                <BadState
-                  title="Invalid link"
-                  message={loadState.message}
-                  onRetry={retry}
-                />
-              )}
-              {loadState.kind === "offline" && (
-                <BadState
-                  title="You're offline"
-                  message={loadState.message}
-                  onRetry={retry}
-                />
-              )}
-              {loadState.kind === "expired" && (
-                <BadState
-                  title="Link expired"
-                  message={loadState.message}
-                  onRetry={retry}
-                />
-              )}
-              {loadState.kind === "revoked" && (
-                <BadState
-                  title="Link cancelled"
-                  message={loadState.message}
-                  onRetry={retry}
-                />
-              )}
-              {(loadState.kind === "http" || loadState.kind === "config") && (
-                <BadState
-                  title="Something went wrong"
-                  message={loadState.message}
-                  onRetry={retry}
-                />
-              )}
-            </>
-          )}
+      {badCopy && (
+        <GuestBadState
+          title={badCopy.title}
+          message={badCopy.message}
+          onRetry={retry}
+        />
+      )}
 
           {data && settled?.type === "paid" && (
             <div className="rounded-2xl border border-green-200 bg-white p-6 text-center shadow-sm">
@@ -354,7 +278,7 @@ export default function SplitView({
                 <button
                   type="button"
                   onClick={switchName}
-                  className={`${MIN_TOUCH} mt-4 inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-base font-semibold text-slate-700`}
+                  className={`${TOUCH} mt-4 inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-base font-semibold text-slate-700`}
                 >
                   Not {participant.name}? Switch
                 </button>
@@ -369,13 +293,13 @@ export default function SplitView({
               </p>
               <h2 className="mt-3 text-xl font-bold text-slate-900">Noted</h2>
               <p className="mt-2 text-base leading-relaxed text-slate-600">
-                Noted — {data.paidByName} will review and get back to you.
+                Noted - {data.paidByName} will review and get back to you.
               </p>
               {participant && (
                 <button
                   type="button"
                   onClick={switchName}
-                  className={`${MIN_TOUCH} mt-4 inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-base font-semibold text-slate-700`}
+                  className={`${TOUCH} mt-4 inline-flex items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-base font-semibold text-slate-700`}
                 >
                   Not {participant.name}? Switch
                 </button>
@@ -407,7 +331,7 @@ export default function SplitView({
                       <button
                         type="button"
                         onClick={() => chooseParticipant(p.memberId)}
-                        className={`${MIN_TOUCH} flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2 text-left text-base active:border-blue-400`}
+                        className={`${TOUCH} flex w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2 text-left text-base active:border-[#7AA5FF]`}
                       >
                         <span>
                           <span className="block font-semibold text-slate-900">
@@ -449,7 +373,7 @@ export default function SplitView({
                 <button
                   type="button"
                   onClick={switchName}
-                  className="mt-2 inline-flex min-h-[44px] items-center text-base font-semibold text-blue-700 underline-offset-2 active:underline"
+                  className="mt-2 inline-flex min-h-[44px] items-center text-base font-semibold text-[#1A5FE8] underline-offset-2 active:underline"
                 >
                   Not {participant.name}? Switch
                 </button>
@@ -501,7 +425,7 @@ export default function SplitView({
                   {upiLink && (
                     <a
                       href={upiLink}
-                      className={`${MIN_TOUCH} inline-flex w-full items-center justify-center rounded-xl bg-blue-600 px-5 text-base font-semibold text-white active:bg-blue-700`}
+                      className={`${TOUCH} inline-flex w-full items-center justify-center rounded-xl bg-[#1F6BFF] px-5 text-base font-semibold text-white active:bg-[#1A5FE8]`}
                     >
                       Pay via UPI • {formatAmount(participant.shareAmount, data.currency)}
                     </a>
@@ -510,7 +434,7 @@ export default function SplitView({
                     type="button"
                     onClick={handlePaid}
                     disabled={payPending}
-                    className={`${MIN_TOUCH} inline-flex w-full items-center justify-center rounded-xl border-2 px-5 text-base font-semibold ${
+                    className={`${TOUCH} inline-flex w-full items-center justify-center rounded-xl border-2 px-5 text-base font-semibold ${
                       payPending
                         ? "cursor-wait border-green-300 bg-green-50 text-green-700"
                         : "border-green-600 bg-white text-green-700 active:bg-green-50"
@@ -534,7 +458,7 @@ export default function SplitView({
                         type="button"
                         onClick={handlePaid}
                         disabled={payPending}
-                        className={`${MIN_TOUCH} mt-2 inline-flex items-center justify-center rounded-xl bg-red-600 px-5 text-base font-semibold text-white disabled:opacity-70`}
+                        className={`${TOUCH} mt-2 inline-flex items-center justify-center rounded-xl bg-red-600 px-5 text-base font-semibold text-white disabled:opacity-70`}
                       >
                         Try again
                       </button>
@@ -548,7 +472,7 @@ export default function SplitView({
                         setDisputeOpen(true);
                         setDisputeError(null);
                       }}
-                      className={`${MIN_TOUCH} inline-flex w-full items-center justify-center rounded-xl px-5 text-base font-semibold text-slate-600 underline-offset-2 active:underline`}
+                      className={`${TOUCH} inline-flex w-full items-center justify-center rounded-xl px-5 text-base font-semibold text-slate-600 underline-offset-2 active:underline`}
                     >
                       Something is wrong
                     </button>
@@ -569,7 +493,7 @@ export default function SplitView({
                         maxLength={DISPUTE_MAX_LENGTH}
                         rows={3}
                         placeholder="e.g. I wasn’t on this trip, wrong amount…"
-                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-base text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none"
+                        className="mt-2 w-full rounded-xl border border-slate-300 bg-white p-3 text-base text-slate-900 placeholder:text-slate-400 focus:border-[#1F6BFF] focus:outline-none"
                       />
                       <p className="mt-1 text-right text-sm text-slate-500">
                         {disputeReason.length}/{DISPUTE_MAX_LENGTH}
@@ -587,7 +511,7 @@ export default function SplitView({
                             setDisputeError(null);
                           }}
                           disabled={disputePending}
-                          className={`${MIN_TOUCH} inline-flex flex-1 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-base font-semibold text-slate-700 disabled:opacity-70`}
+                          className={`${TOUCH} inline-flex flex-1 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-base font-semibold text-slate-700 disabled:opacity-70`}
                         >
                           Cancel
                         </button>
@@ -595,7 +519,7 @@ export default function SplitView({
                           type="button"
                           onClick={handleDispute}
                           disabled={disputePending}
-                          className={`${MIN_TOUCH} inline-flex flex-1 items-center justify-center rounded-xl bg-amber-500 px-4 text-base font-semibold text-white active:bg-amber-600 disabled:opacity-70`}
+                          className={`${TOUCH} inline-flex flex-1 items-center justify-center rounded-xl bg-amber-500 px-4 text-base font-semibold text-white active:bg-amber-600 disabled:opacity-70`}
                         >
                           {disputePending ? "Sending…" : "Send"}
                         </button>
@@ -606,21 +530,6 @@ export default function SplitView({
               </section>
             </div>
           )}
-        </main>
-
-        {/* Footer */}
-        <footer className="mt-6 text-center">
-          <a
-            href="#"
-            className={`${MIN_TOUCH} inline-flex w-full items-center justify-center rounded-xl border border-slate-300 bg-white px-5 text-base font-semibold text-slate-800`}
-          >
-            Get Splito app
-          </a>
-          <p className="mt-2 text-sm text-slate-400">
-            Split bills with friends, no spreadsheets.
-          </p>
-        </footer>
-      </div>
-    </div>
+    </GuestShell>
   );
 }

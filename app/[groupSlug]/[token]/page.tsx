@@ -12,8 +12,8 @@ export async function generateMetadata({
   const { groupSlug } = await params;
   const groupName = prettyPrintSlug(groupSlug);
   return {
-    title: `${groupName} • Splito`,
-    description: `Pay your share for ${groupName} — no app needed.`,
+    title: `${groupName} • SplitHuddle`,
+    description: `Pay your share for ${groupName} - no app needed.`,
   };
 }
 
