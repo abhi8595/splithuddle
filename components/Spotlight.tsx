@@ -69,7 +69,7 @@ export default function Spotlight() {
             className="absolute top-1/2 left-1/2 h-[340px] w-[340px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-gradient-to-b from-[#D9F4E3] to-[#BDEBD2]"
           />
           <Image
-            src="/noappsection1.png"
+            src="/noappsection.png"
             alt="Friend view without the app showing what they owe and pay options"
             width={1024}
             height={768}
